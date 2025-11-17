@@ -333,3 +333,14 @@ Proprietary - Protexxa Inc.
 ## Version
 
 v1.0.0 - Hardened, SOC 2 aligned production release
+
+## ECS Deployment Infrastructure
+
+The following ECS infrastructure has been provisioned:
+- **Cluster**: dme-cluster
+- **Service**: dme-searcher-dev
+- **Task Definition**: dme-searcher-dev:1
+- **Task Execution Role**: ecsTaskExecutionRole
+- **Task Role**: dme-searcher-task-role
+
+GitHub Actions CI/CD pipeline now supports full deployment to ECS!
