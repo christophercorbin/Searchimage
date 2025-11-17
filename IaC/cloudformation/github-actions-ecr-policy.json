@@ -1,0 +1,44 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ECRGetAuthorizationToken",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ECRPushImage",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:ListImages"
+      ],
+      "Resource": [
+        "arn:aws:ecr:us-east-1:438465156498:repository/searcher-dev",
+        "arn:aws:ecr:us-east-1:438465156498:repository/searcher-stage",
+        "arn:aws:ecr:us-east-1:438465156498:repository/searcher-main"
+      ]
+    },
+    {
+      "Sid": "ECRCreateRepository",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:CreateRepository",
+        "ecr:PutImageScanningConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:ecr:us-east-1:438465156498:repository/searcher-*"
+      ]
+    }
+  ]
+}

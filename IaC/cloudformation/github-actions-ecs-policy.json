@@ -1,0 +1,49 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ECSDescribe",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeTaskDefinition",
+        "ecs:DescribeServices",
+        "ecs:DescribeClusters",
+        "ecs:DescribeTasks"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ECSRegisterTaskDefinition",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:RegisterTaskDefinition"
+      ],
+      "Resource": [
+        "arn:aws:ecs:us-east-1:438465156498:task-definition/dme-searcher-*:*"
+      ]
+    },
+    {
+      "Sid": "ECSUpdateService",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:UpdateService"
+      ],
+      "Resource": [
+        "arn:aws:ecs:us-east-1:438465156498:service/dme-cluster/dme-searcher-dev",
+        "arn:aws:ecs:us-east-1:438465156498:service/dme-cluster/dme-searcher-stage",
+        "arn:aws:ecs:us-east-1:438465156498:service/dme-cluster/dme-searcher-prod"
+      ]
+    },
+    {
+      "Sid": "IAMPassRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::438465156498:role/ecsTaskExecutionRole",
+        "arn:aws:iam::438465156498:role/dme-searcher-task-role"
+      ]
+    }
+  ]
+}
