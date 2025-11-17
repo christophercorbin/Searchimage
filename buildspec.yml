@@ -1,0 +1,64 @@
+#########
+# When this yml file is modified, please copy the contents and paste it in the AWS CodeBuild console. (As the codebuild project does not have access to our repository and thus cannot read this file)
+# For the commented out code, please leave as reference for now, see notes below.
+# - According to https://docs.aws.amazon.com/codebuild/latest/userguide/troubleshooting.html#troubleshooting-versions and https://docs.aws.amazon.com/sdkref/latest/guide/feature-container-credentials.html, docker container running in CodeBuild does not have access to the AWS credentials stored in the environment variables. So this document provides a workaround for the container to access the AWS credentials.
+# - However, the workaround did not work as expected, as the AWS_CONTAINER_CREDENTIALS_RELATIVE_URI environment variable was not available in the container.
+# - Therefore, the current approach is to run the container, and copy the files from the container to the host, and run the tests on the host, since the host has access to the AWS credentials.
+#########
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "Ubuntu Version:" $(lsb_release -a)
+      - echo "Setting up Docker..."
+      - apt-get update
+      - apt-get install -y ca-certificates curl coreutils
+      - install -m 0755 -d /etc/apt/keyrings
+      - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+      - chmod a+r /etc/apt/keyrings/docker.asc
+
+      # Add the repository to Apt sources:
+      - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+      - apt-get update
+      - apt-get -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+      # Start the Docker daemon manually (This is likely due to the policy-rc.d restriction in AWS CodeBuild, which prevents Docker from starting as a service by default.)
+      - dockerd > /var/log/dockerd.log 2>&1 &
+      - echo "Waiting for Docker to start..."
+      - sleep 10  # Adjust this if Docker needs more time to initialize
+      - docker --version
+      - docker run hello-world
+
+  pre_build:
+    commands:
+      - echo "Logging into Amazon ECR..."
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 722568544242.dkr.ecr.us-east-1.amazonaws.com
+      - echo "Pulling the latest image from ECR - $ECR_REPOSITORY"
+      - docker pull 722568544242.dkr.ecr.us-east-1.amazonaws.com/$ECR_REPOSITORY:latest
+      - echo "Running AWS CLI test to check permissions..."
+      - aws sts get-caller-identity # This should show the IAM role being assumed
+      - echo "Finished testing AWS CLI access in the codebuild fleet instance environment."
+      - echo "Setting up environment for tests..."
+      - mkdir /docker  # Create a directory to copy all contents from the Docker image
+      - echo "Starting container to copy files..."
+      - container_id=$(docker create 722568544242.dkr.ecr.us-east-1.amazonaws.com/$ECR_REPOSITORY:latest)  # Create a container from the image
+      - echo "Copying all files from Docker image to /docker directory..."
+      - docker cp $container_id:/ /docker  # Copy all contents from the image to /docker
+      - docker rm $container_id  # Remove the temporary container
+      - echo "Environment setup complete."
+      - ls -al /docker
+      - ls -al /docker/tests
+
+  build:
+    commands:
+      - echo "Running unit & integration tests"
+      - export PYTHONPATH=/docker
+      - /docker/usr/local/bin/python3 /docker/usr/local/bin/pytest -s /docker/tests/unit/test_scan_request_dto.py /docker/tests/unit/test_db_client.py /docker/tests/integration/test_user_service_integration.py /docker/tests/integration/test_web_searcher_integration.py
+  post_build:
+    commands:
+      - echo "Build completed for image"
+
+artifacts:
+  files:
+    - '**/*'

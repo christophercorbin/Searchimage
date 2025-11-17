@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ECR Repositories for DME Searcher - hardened with scanning and encryption'
+
+Parameters:
+  AWSAccountId:
+    Type: String
+    Description: AWS Account ID
+    Default: '722568544242'
+
+Resources:
+  # =========================================================================
+  # ECR Repository - Development
+  # =========================================================================
+  SearcherDevRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: searcher-dev
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      ImageTagMutability: ENABLED
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 dev images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: dev
+        - Key: Application
+          Value: dme-searcher
+
+  # =========================================================================
+  # ECR Repository - Staging
+  # =========================================================================
+  SearcherStageRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: searcher-stage
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      ImageTagMutability: ENABLED
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 20 staging images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: staging
+        - Key: Application
+          Value: dme-searcher
+
+  # =========================================================================
+  # ECR Repository - Production
+  # =========================================================================
+  SearcherMainRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: searcher-main
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      ImageTagMutability: ENABLED
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 50 production images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 50
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: production
+        - Key: Application
+          Value: dme-searcher
+
+  # =========================================================================
+  # Repository Access Policy - Allow GitHub Actions OIDC Role
+  # =========================================================================
+  RepositoryAccessPolicy:
+    Type: AWS::ECR::RepositoryPolicy
+    Properties:
+      RepositoryName: !Ref SearcherDevRepository
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowGitHubActionsOIDCPush
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWSAccountId}:role/github-actions-ecr-role'
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+              - ecr:DescribeRepositories
+              - ecr:DescribeImages
+
+  RepositoryAccessPolicyStage:
+    Type: AWS::ECR::RepositoryPolicy
+    Properties:
+      RepositoryName: !Ref SearcherStageRepository
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowGitHubActionsOIDCPush
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWSAccountId}:role/github-actions-ecr-role'
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+              - ecr:DescribeRepositories
+              - ecr:DescribeImages
+
+  RepositoryAccessPolicyMain:
+    Type: AWS::ECR::RepositoryPolicy
+    Properties:
+      RepositoryName: !Ref SearcherMainRepository
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowGitHubActionsOIDCPush
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWSAccountId}:role/github-actions-ecr-role'
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+              - ecr:DescribeRepositories
+              - ecr:DescribeImages
+
+Outputs:
+  SearcherDevRepositoryUri:
+    Description: ECR Repository URI for Dev
+    Value: !GetAtt SearcherDevRepository.RepositoryUri
+    Export:
+      Name: SearcherDevRepositoryUri
+
+  SearcherStageRepositoryUri:
+    Description: ECR Repository URI for Staging
+    Value: !GetAtt SearcherStageRepository.RepositoryUri
+    Export:
+      Name: SearcherStageRepositoryUri
+
+  SearcherMainRepositoryUri:
+    Description: ECR Repository URI for Production
+    Value: !GetAtt SearcherMainRepository.RepositoryUri
+    Export:
+      Name: SearcherMainRepositoryUri

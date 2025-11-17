@@ -1,0 +1,270 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ECS Fargate Cluster and Services for DME Searcher'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, stage, prod]
+    Description: Environment name
+
+  ContainerImage:
+    Type: String
+    Default: 722568544242.dkr.ecr.us-east-1.amazonaws.com/searcher-dev:latest-dev
+    Description: Container image URI
+
+  DesiredTaskCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 10
+    Description: Desired number of tasks
+
+  TaskMemory:
+    Type: Number
+    Default: 512
+    AllowedValues: [512, 1024, 2048, 4096]
+    Description: Task memory in MB
+
+  TaskCPU:
+    Type: Number
+    Default: 256
+    AllowedValues: [256, 512, 1024, 2048]
+    Description: Task CPU units
+
+Conditions:
+  IsProd: !Equals [!Ref EnvironmentName, prod]
+  IsStage: !Equals [!Ref EnvironmentName, stage]
+  IsDev: !Equals [!Ref EnvironmentName, dev]
+
+Resources:
+  # =========================================================================
+  # CloudWatch Log Group
+  # =========================================================================
+  ECSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/dme-searcher-${EnvironmentName}'
+      RetentionInDays: !If [IsProd, 30, !If [IsStage, 14, 7]]
+
+  # =========================================================================
+  # ECS Cluster
+  # =========================================================================
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: dme-cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ECSClusterCapacityProvider:
+    Type: AWS::ECS::ClusterCapacityProviders
+    Properties:
+      Cluster: !Ref ECSCluster
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: !If [IsProd, FARGATE, FARGATE_SPOT]
+          Weight: 1
+
+  # =========================================================================
+  # ECS Task Definition
+  # =========================================================================
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub 'dme-searcher-${EnvironmentName}'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref TaskCPU
+      Memory: !Ref TaskMemory
+      ExecutionRoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/ecsTaskExecutionRole'
+      TaskRoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/dme-searcher-task-role'
+      ContainerDefinitions:
+        - Name: !Sub 'dme-searcher-${EnvironmentName}'
+          Image: !Ref ContainerImage
+          Essential: true
+          PortMappings: []
+          Environment:
+            - Name: ENV
+              Value: !Ref EnvironmentName
+            - Name: FLOW
+              Value: !If [IsProd, full, !If [IsStage, full, quick]]
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: LOG_LEVEL
+              Value: !If [IsProd, WARNING, !If [IsStage, INFO, DEBUG]]
+            - Name: LOG_FORMAT
+              Value: json
+          Secrets:
+            - Name: SERPER_API_KEY
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dme-searcher/serper-api-key'
+            - Name: MONGODB_URL
+              ValueFrom: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${EnvironmentName}/mongodb'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: dme-searcher
+          ReadonlyRootFilesystem: true
+          MountPoints:
+            - SourceVolume: tmp
+              ContainerPath: /tmp
+          SecurityContext:
+            RunAsNonRoot: true
+            RunAsUser: 10001
+            RunAsGroup: 10001
+      Volumes:
+        - Name: tmp
+          EphemeralStorage:
+            SizeInGiB: 10
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # =========================================================================
+  # ECS Service
+  # =========================================================================
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: TaskDefinition
+    Properties:
+      ServiceName: !Sub 'dme-searcher-${EnvironmentName}'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: !Ref DesiredTaskCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: !If [IsProd, DISABLED, ENABLED]
+          Subnets:
+            - !Sub 'subnet-12345678'  # Update with your VPC subnet
+          SecurityGroups:
+            - !Sub 'sg-12345678'      # Update with your security group
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      EnableECSManagedTags: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # =========================================================================
+  # Auto Scaling Target
+  # =========================================================================
+  ServiceScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: !If [IsProd, 10, !If [IsStage, 5, 3]]
+      MinCapacity: !If [IsProd, 2, 1]
+      ResourceId: !Sub 'service/dme-cluster/dme-searcher-${EnvironmentName}'
+      RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/service-autoscaling-role'
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  # =========================================================================
+  # CPU-Based Scaling Policy
+  # =========================================================================
+  ServiceScalingPolicyCPU:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub 'cpu-scaling-${EnvironmentName}'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ServiceScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70.0
+        ScaleOutCooldown: 60
+        ScaleInCooldown: 300
+
+  # =========================================================================
+  # Memory-Based Scaling Policy
+  # =========================================================================
+  ServiceScalingPolicyMemory:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub 'memory-scaling-${EnvironmentName}'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ServiceScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        TargetValue: 80.0
+        ScaleOutCooldown: 60
+        ScaleInCooldown: 300
+
+  # =========================================================================
+  # CloudWatch Alarms
+  # =========================================================================
+  TaskCountAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'dme-searcher-${EnvironmentName}-task-count-alarm'
+      AlarmDescription: Alert when task count drops below desired
+      MetricName: RunningCount
+      Namespace: ECS/ContainerInsights
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Sub '${DesiredTaskCount}'
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !Sub 'dme-searcher-${EnvironmentName}'
+        - Name: ClusterName
+          Value: dme-cluster
+
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'dme-searcher-${EnvironmentName}-high-cpu'
+      AlarmDescription: Alert when CPU utilization is high
+      MetricName: CPUUtilization
+      Namespace: ECS/ContainerInsights
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 90
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !Sub 'dme-searcher-${EnvironmentName}'
+        - Name: ClusterName
+          Value: dme-cluster
+
+Outputs:
+  ClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub 'DMESearcherCluster-${EnvironmentName}'
+
+  ServiceName:
+    Description: ECS Service Name
+    Value: !GetAtt ECSService.Name
+    Export:
+      Name: !Sub 'DMESearcherService-${EnvironmentName}'
+
+  TaskDefinitionArn:
+    Description: Task Definition ARN
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Sub 'DMESearcherTaskDef-${EnvironmentName}'
+
+  LogGroupName:
+    Description: CloudWatch Log Group Name
+    Value: !Ref ECSLogGroup
+    Export:
+      Name: !Sub 'DMESearcherLogGroup-${EnvironmentName}'
